@@ -986,7 +986,7 @@ export default function App() {
       )}
 
       {toast && (
-        <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-2 rounded-xl bg-[#181c26]/95 border border-blue-500/40 text-xs font-medium text-blue-100 shadow-2xl backdrop-blur-md">
+        <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-[90] flex items-center gap-2 px-4 py-2 rounded-xl bg-[#181c26]/95 border border-blue-500/40 text-xs font-medium text-blue-100 shadow-2xl backdrop-blur-md">
           <Sparkles className="w-3.5 h-3.5 text-blue-400" />
           <span>{toast}</span>
         </div>
