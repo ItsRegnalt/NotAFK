@@ -10,6 +10,7 @@ import ctypes
 import ctypes.wintypes as wt
 import random
 import time
+from contextlib import contextmanager
 
 user32, gdi32 = ctypes.windll.user32, ctypes.windll.gdi32
 user32.GetDC.restype = wt.HDC
@@ -21,6 +22,14 @@ user32.GetAncestor.restype = wt.HWND
 user32.WindowFromPoint.argtypes = [wt.POINT]
 user32.WindowFromPoint.restype = wt.HWND
 user32.PostMessageW.argtypes = [wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM]
+try:  # Windows 10 1607+
+    user32.SetThreadDpiAwarenessContext.argtypes = [ctypes.c_void_p]
+    user32.SetThreadDpiAwarenessContext.restype = ctypes.c_void_p
+    user32.GetWindowDpiAwarenessContext.argtypes = [wt.HWND]
+    user32.GetWindowDpiAwarenessContext.restype = ctypes.c_void_p
+    HAS_DPI_CONTEXT = True
+except AttributeError:
+    HAS_DPI_CONTEXT = False
 
 WM_MOUSEMOVE, WM_KEYDOWN, WM_KEYUP, WM_CHAR, WM_SYSKEYDOWN, WM_SYSKEYUP = 0x200, 0x100, 0x101, 0x102, 0x104, 0x105
 BUTTONS = {  # name: (down, up, double-click, MK_* flag)
@@ -81,6 +90,39 @@ class BackgroundInput:
         self.hwnd = hwnd
         self.focus = hwnd  # control that receives keys: last clicked child, else the window itself
 
+    def check(self):
+        """Before each step: a closed or minimized target would silently swallow every message."""
+        if not user32.IsWindow(self.hwnd):
+            raise RuntimeError('Target window was closed.')
+        if user32.IsIconic(self.hwnd):
+            raise RuntimeError('Target window was minimized. It can stay behind other windows, but not minimized.')
+
+    @contextmanager
+    def _target_dpi(self):
+        """Work in the target's coordinate space: a DPI-unaware app on a scaled monitor is virtualized and expects
+        logical coordinates, while ours (per-monitor aware) are physical."""
+        old = user32.SetThreadDpiAwarenessContext(user32.GetWindowDpiAwarenessContext(self.hwnd)) \
+            if HAS_DPI_CONTEXT else None
+        try:
+            yield
+        finally:
+            if old:
+                user32.SetThreadDpiAwarenessContext(old)
+
+    def _logical(self, x, y):
+        """Physical screen point -> the target's screen point (call inside _target_dpi)."""
+        pt = wt.POINT(x, y)
+        if HAS_DPI_CONTEXT:
+            user32.PhysicalToLogicalPointForPerMonitorDPI(self.hwnd, ctypes.byref(pt))
+        return pt
+
+    def _client(self, hwnd, x, y):
+        """Physical screen point -> hwnd's client point, in the target's coordinate space."""
+        with self._target_dpi():
+            pt = self._logical(x, y)
+            user32.ScreenToClient(hwnd, ctypes.byref(pt))
+            return pt
+
     def to_screen(self, rx, ry):
         """Window-relative point (saved at pick time) -> current screen point, so moving the window is fine."""
         r = window_rect(self.hwnd)
@@ -89,13 +131,15 @@ class BackgroundInput:
     def _child_at(self, x, y):
         """Deepest visible child of the target under screen point -> (hwnd, client x, client y)."""
         hwnd = self.hwnd
-        while True:
-            pt = wt.POINT(x, y)
-            user32.ScreenToClient(hwnd, ctypes.byref(pt))
-            child = user32.ChildWindowFromPointEx(hwnd, pt, CWP_SKIPINVISIBLE | CWP_SKIPDISABLED | CWP_SKIPTRANSPARENT)
-            if not child or child == hwnd:
-                return hwnd, pt.x, pt.y
-            hwnd = child
+        with self._target_dpi():
+            screen = self._logical(x, y)
+            while True:
+                pt = wt.POINT(screen.x, screen.y)
+                user32.ScreenToClient(hwnd, ctypes.byref(pt))
+                child = user32.ChildWindowFromPointEx(hwnd, pt, CWP_SKIPINVISIBLE | CWP_SKIPDISABLED | CWP_SKIPTRANSPARENT)
+                if not child or child == hwnd:
+                    return hwnd, pt.x, pt.y
+                hwnd = child
 
     def move(self, x, y):
         hwnd, cx, cy = self._child_at(x, y)
@@ -112,7 +156,7 @@ class BackgroundInput:
         # cursor, which would drag a selection to wherever the user's mouse is. A tap sends down+up together;
         # a long press keeps re-sending our own position so the last move before button-up is ours.
         end = time.time() + hold_ms / 1000
-        while time.time() < end:
+        while time.time() < end and not (stop and stop()):
             time.sleep(0.015)
             user32.PostMessageW(hwnd, WM_MOUSEMOVE, flag, pos)
         user32.PostMessageW(hwnd, up, 0, pos)
@@ -131,11 +175,11 @@ class BackgroundInput:
         user32.PostMessageW(hwnd, WM_MOUSEMOVE, 0, _lparam(cx, cy))
         user32.PostMessageW(hwnd, down, flag, _lparam(cx, cy))
         steps = max(8, duration_ms // 25)
+        pt = wt.POINT(cx, cy)  # stopped before the first step: button goes up where it went down
         for i in range(1, steps + 1):
             if stop and stop():
                 break
-            pt = wt.POINT(round(x + (to_x - x) * i / steps), round(y + (to_y - y) * i / steps))
-            user32.ScreenToClient(hwnd, ctypes.byref(pt))
+            pt = self._client(hwnd, round(x + (to_x - x) * i / steps), round(y + (to_y - y) * i / steps))
             user32.PostMessageW(hwnd, WM_MOUSEMOVE, flag, _lparam(pt.x, pt.y))
             time.sleep(duration_ms / 1000 / steps)
         user32.PostMessageW(hwnd, WM_MOUSEMOVE, flag, _lparam(pt.x, pt.y))  # ours is the last move (see click)
@@ -149,8 +193,10 @@ class BackgroundInput:
                 return False
             if char == '\n':
                 self.press_key('Enter')
-            else:
-                user32.PostMessageW(self.focus, WM_CHAR, ord(char), 1)
+            else:  # WM_CHAR is UTF-16: characters outside the BMP (emoji) go as two surrogate halves
+                units = char.encode('utf-16-le')
+                for i in range(0, len(units), 2):
+                    user32.PostMessageW(self.focus, WM_CHAR, int.from_bytes(units[i:i + 2], 'little'), 1)
             time.sleep(random.uniform(min_delay_ms, max_delay_ms) / 1000)
         return True
 
@@ -186,10 +232,12 @@ class BackgroundInput:
     def scroll(self, x, y, amount, stop=None):
         """Mouse wheel over the control at screen (x, y); WM_MOUSEWHEEL carries screen coordinates."""
         hwnd, _, _ = self._child_at(x, y)
+        with self._target_dpi():
+            screen = self._logical(x, y)
         delta = 120 if amount > 0 else -120
         for _ in range(abs(amount)):
             if stop and stop():
                 return False
-            user32.PostMessageW(hwnd, 0x20A, (delta & 0xFFFF) << 16, _lparam(x, y))
+            user32.PostMessageW(hwnd, 0x20A, (delta & 0xFFFF) << 16, _lparam(screen.x, screen.y))
             time.sleep(random.uniform(0.03, 0.08))
         return True

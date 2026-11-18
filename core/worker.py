@@ -148,6 +148,7 @@ class ExecutionWorker(threading.Thread):
 
     def _execute_background(self, action: Action) -> bool:
         bg, stop = self.background, self.is_stop_requested
+        bg.check()
         if isinstance(action, ScrollAction):
             x, y = bg.to_screen(*action.rel) if action.rel else (action.x, action.y)
             return bg.scroll(x, y, action.amount, stop)
