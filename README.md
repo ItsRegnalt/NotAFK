@@ -4,7 +4,15 @@ Desktop automation for simple, repetitive tasks on Windows: clicks, typing, key 
 with human-like mouse movement and timing. The UI is React (`v2/`) inside a WebView2 window (`ui/webview_shell.py`);
 the engine is plain Python (`core/`).
 
-## Run
+## Download
+
+1. Download `NotAFK-x.y.z.zip` from [Releases](https://github.com/ItsRegnalt/NotAFK/releases) and unzip it anywhere.
+2. Run `NotAFK.exe`. The EXE is not code-signed, so Windows SmartScreen may warn on first start:
+   click **More info → Run anyway**.
+3. Updates: NotAFK checks GitHub for a newer release at startup and offers to install it
+   (Settings → Check for updates now). Your saved automations are kept.
+
+## Run from source
 
 - Double-click `Automate_Baslat.bat`, or `python main.py`
 - Needs the Microsoft Edge WebView2 Runtime (built into Windows 11; NotAFK offers the download if it is missing)
