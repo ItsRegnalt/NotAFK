@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+build/
+dist/
+v2/node_modules/
+v2/dist/
+_old_icon/

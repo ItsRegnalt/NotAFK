@@ -1,0 +1,3 @@
+"""
+Automate - Core Package
+"""

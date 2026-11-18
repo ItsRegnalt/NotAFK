@@ -1,0 +1,32 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root { min-width: 360px; min-height: 100%; margin: 0; }
+body { font-family: Inter, Segoe UI, sans-serif; }
+* { box-sizing: border-box; }
+
+html, body, #root { height: 100%; overflow: hidden; }
+/* Desktop shell: window is transparent so the rounded card corners show; browser preview keeps a dark page. */
+html.desktop, html.desktop body { background: #0d0f14; }
+/* Qt: the OS rounds the window corners, so the card itself stays square */
+html.desktop .app-card { border-radius: 0; border: 0; }
+html:not(.desktop) body { background: #07090e; }
+html:not(.desktop) .app-shell { padding: 16px; }
+html:not(.desktop) .app-card { max-width: 1440px; max-height: 810px; }
+/* Thin dark scrollbars instead of the default white Chromium ones */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #2c344a; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #3b4664; }
+::-webkit-scrollbar-button { display: none; }
+
+/* Maximized: card touches screen edges, so no rounded corners/border and no resize handles */
+html.maximized .app-card { border-radius: 0; border: 0; }
+html.maximized .resize-edge { display: none; }
+/* Skip CSS transitions while the window is resizing, they lag behind the new layout */
+html.resizing * { transition: none !important; }
+
+/* Fit-to-window scaling (see main.jsx): zoom the page, and size the shell in un-zoomed units */
+html.desktop body { zoom: var(--fit, 1); }
+html.desktop .app-shell { height: calc(100vh / var(--fit, 1)); width: calc(100vw / var(--fit, 1)); }
